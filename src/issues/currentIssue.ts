@@ -79,7 +79,10 @@ export class CurrentIssue {
 						this._branchName = await vscode.window.showInputBox({ placeHolder: `issue${this.issueModel.number}`, prompt: 'Enter the label for the new branch.' });
 						break;
 					}
-					default: this._branchName = await variableSubstitution(createBranchConfig, this.issue, user); break;
+					default: {
+						this._branchName = await variableSubstitution(createBranchConfig, this.issue, undefined, user);
+						break;
+					}
 				}
 			}
 		}

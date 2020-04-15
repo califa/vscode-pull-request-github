@@ -7,10 +7,10 @@ import * as LRUCache from 'lru-cache';
 import * as vscode from 'vscode';
 import { IssueModel } from '../github/issueModel';
 import { IAccount } from '../github/interface';
-import { PullRequestManager, PRManagerState, NO_MILESTONE } from '../github/pullRequestManager';
+import { PullRequestManager, PRManagerState, NO_MILESTONE, PullRequestDefaults } from '../github/pullRequestManager';
 import { MilestoneModel } from '../github/milestoneModel';
 import { API as GitAPI, GitExtension } from '../typings/git';
-import { ISSUES_CONFIGURATION, BRANCH_CONFIGURATION, QUERIES_CONFIGURATION, DEFAULT_QUERY_CONFIGURATION } from './util';
+import { ISSUES_CONFIGURATION, BRANCH_CONFIGURATION, QUERIES_CONFIGURATION, DEFAULT_QUERY_CONFIGURATION, variableSubstitution } from './util';
 import { CurrentIssue } from './currentIssue';
 
 // TODO: make exclude from date words configurable
@@ -80,7 +80,7 @@ export class StateManager {
 			this.context.subscriptions.push(repository.state.onDidChange(async () => {
 				if ((repository.state.HEAD ? repository.state.HEAD.commit : undefined) !== this._lastHead) {
 					this._lastHead = (repository.state.HEAD ? repository.state.HEAD.commit : undefined);
-					this.setIssueData();
+					await this.setIssueData();
 				}
 
 				const newBranch = repository.state.HEAD?.name;
@@ -115,8 +115,8 @@ export class StateManager {
 		await this.setUsers();
 		await this.setIssueData();
 		this.registerRepositoryChangeEvent();
-		this.context.subscriptions.push(this.onRefreshCacheNeeded(() => {
-			this.setIssueData();
+		this.context.subscriptions.push(this.onRefreshCacheNeeded(async () => {
+			await this.setIssueData();
 		}));
 	}
 
@@ -143,14 +143,31 @@ export class StateManager {
 		}
 	}
 
-	private setIssueData() {
+	private async getCurrentUser(defaults: PullRequestDefaults): Promise<string | undefined> {
+		const remotes = this.manager.getGitHubRemotes();
+		for (const remote of remotes) {
+			if (remote.owner === defaults.owner && remote.repositoryName === defaults.repo) {
+				return (await this.manager.credentialStore.getCurrentUser(remote)).login;
+			}
+		}
+	}
+
+	private async setIssueData() {
 		this._issueCollection.clear();
+		let defaults: PullRequestDefaults | undefined;
+		let user: string | undefined;
 		for (const query of this._queries) {
 			let items: Promise<IssueModel[] | MilestoneModel[]>;
 			if (query.query === DEFAULT_QUERY_CONFIGURATION) {
 				items = this.setMilestones();
 			} else {
-				items = this.setIssues(query.query);
+				if (!defaults) {
+					defaults = await this.manager.getPullRequestDefaults();
+				}
+				if (!user) {
+					user = await this.getCurrentUser(defaults);
+				}
+				items = this.setIssues(await variableSubstitution(query.query, undefined, defaults, user));
 			}
 			this._issueCollection.set(query.label, items);
 		}
